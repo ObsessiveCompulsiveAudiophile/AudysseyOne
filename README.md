@@ -1,4 +1,4 @@
-# AudysseyOne
+# AudysseyOne v1.1
 
 Optimize your home theatre system in under 5 minutes with just 1-click!
 A platform and installation free revolutionary script that works right in your web browser
