@@ -104,13 +104,14 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.0/math.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script>
-
+// **************************** version 1.1 18 MAR 2024 - 21:25 CET ************************************
   let adyContents; let fileName;
-  let dChannels; let subtrueMax;
+  let dChannels; let subtrueMaxDelay;let subtrueMaxTrim;
   let indexSW; let cDist;
   let sOs;
-  let delay = 250; //increase this value if your machine is slow and needs more time to process operations
+  let delay = 200; //increase this value if your machine is slow and needs more time to process operations
   const baseUrl = 'http://localhost:4735/measurements';
   const pollUrl = 'http://localhost:4735/measurements/process-result';
   let averageLvl;
@@ -118,12 +119,31 @@
   function checkModelSpeedOfSound(jsonData) {
     const targetModelName = jsonData.targetModelName;
     const lastSixDigits = targetModelName.slice(-6);
-    const specialModels = ["X6300H", "X4300H", "X3300W", "X2300W", "X1300W", "X1400H", "X2400H", "X3400H", "X4400H", "X6400H", "AV7703", "SR7011", "SR6011", "SR5011", "NR1607", "NR1608", "SR5012", "SR6012", "SR7012", "SR8012", "AV7704"]; //Add your model name here if your speed of sound setting is 300 m/s.
+    const specialModels = [
+
+                    //Add your model name in the list below if you're certain your receiver's speed of sound setting is 300 m/s.
+
+                    "X1300W", "X2300W", "X3300W", "X4300H", "X6300H",
+                    "X1400H", "X2400H", "X3400H", "X4400H", "X6400H",
+                    "X1500H", "X2500H", "X3500H", "X4500H", "X6500H", "X8500H",
+                    "X1600H", "X2600H", "X3600H",
+                    "X1700H", "X2700H", "X3700H", "X4700H","X6700H",
+
+                    "SR5011", "SR6011", "SR7011",
+                    "SR5012", "SR6012", "SR7012", "SR8012",
+                    "SR5013", "SR6013", "SR7013",
+                    "SR5014", "SR6014", 
+                    "SR5015", "SR6015", "SR7015", "SR8015",
+                    "AV7703", "AV7704", "AV7705", "AV7706", "AV8805",
+                    "NR1607", "NR1608", "NR1711"
+
+                    ];
+
     const isSpecialModel = specialModels.includes(lastSixDigits);
     (isSpecialModel ? sOs = 300.0 : sOs = 343.0);
     return targetModelName;
   }
-  function updateConstants(jsonData) {
+  async function updateConstants(jsonData) {
     let nSubs = 0;
     const channelKeys = Object.keys(jsonData.detectedChannels);
     dChannels = channelKeys.length;
@@ -136,17 +156,37 @@
         dChannels -= nSubs; dChannels++; break;
       }
     }
-    if (!nSubs) {throw new Error('Optimization will not work with systems with NO subwoofer!')}
-    subtrueMax = 0.0;
+    if (nSubs === 0) {throw new Error('Optimization will not work with systems with NO subwoofer!')}
+    subtrueMaxDelay = 0.0;
+    subtrueMaxTrim = 0.0;
     if (nSubs > 1) {
         for (let i = dChannels - 1; i < Object.keys(jsonData.detectedChannels).length; i++) {
                 const delayAdjustment = parseFloat(jsonData.detectedChannels[i].delayAdjustment);
-                if (delayAdjustment > subtrueMax) {subtrueMax = delayAdjustment;}
+                const trimAdjustment = parseFloat(jsonData.detectedChannels[i].trimAdjustment);
+                if (delayAdjustment > subtrueMaxDelay) {subtrueMaxDelay = delayAdjustment;}
+                if (trimAdjustment < subtrueMaxTrim) {subtrueMaxTrim = trimAdjustment;}
               }
     }
-    subtrueMax = 6.0 - subtrueMax;
+    subtrueMaxDelay = 6.0 - subtrueMaxDelay;
+    subtrueMaxTrim = -(12.0 + subtrueMaxTrim) / 2;
     cDist = parseFloat(jsonData.detectedChannels[1].customDistance);
     if (!cDist > 0.0) {cDist = parseFloat(jsonData.detectedChannels[1].channelReport.distance);}
+
+        if (cDist === 0) {
+          const result = await swal.fire({
+            confirmButtonColor: "#6fa3e7",
+            text: "Audyssey was not able to set your speaker distances due to excessive subwoofer delay. Please enter the actual distance of your center speaker to your main listening position (in meters) to proceed with the optimization:",
+            input: 'text',
+            showCancelButton: true
+          });
+
+            if (result.isConfirmed) {
+              const userInput = result.value;
+              cDist = parseFloat(userInput);
+              console.info(`Center speaker actual distance is set at ${cDist}m based on user input.`);
+            }
+          
+    } 
   }
   function handle_adyUpload(event) {
     document.getElementById("button2").disabled = false;
@@ -489,7 +529,7 @@
       const title = measurements[i].title;
       const titleKey = title.replace(/\d+/g, '');
       if (!/^\D+(\d+)?$/.test(titleKey)) {
-        throw new Error(`Title ${titleKey} does not end with an indice.`);
+        throw new Error(`Speaker name ${titleKey} does not end with an indice.`);
       }
       if (!titles[titleKey]) {
         titles[titleKey] = true;
@@ -499,14 +539,14 @@
       if (matchResult && matchResult.length > 0) {
         titleIndices[titleKey].push(parseInt(matchResult[0]));
       } else {
-        throw new Error(`No indices found in speaker title: ${title}`);
+        throw new Error(`No indices found in speaker name: ${title}`);
       }
     }
     nSpeakers = Object.keys(titles).length;
     const indicesCounts = Object.values(titleIndices).map(indices => indices.length);
     const isIndicesEqual = indicesCounts.every(count => count === indicesCounts[0]);
     if (!isIndicesEqual) {
-      throw new Error('Titles have different numbers of indices.');
+      throw new Error('Speaker names have different numbers of indices.');
     }
     for (const titleKey in titleIndices) {
       const indices = titleIndices[titleKey];
@@ -542,11 +582,13 @@
       await fetch_mREW(tIndex, 'PUT', {title: newTitle});
     };
     console.info(`Done!`);
+    console.info(`************************************************************************************************************************`);
     console.info(`Cleaning up processed measurements...`);
     for (let i = mCount; i > 0; i--) {
       await postDelete(i);
       await new Promise(resolve => setTimeout(resolve, delay * 1.15)); }
       console.log(`Done!`);
+      console.info(`************************************************************************************************************************`);
   }
   async function alignLevels() {
     let customLevel = new Array(dChannels + 1).fill(0);
@@ -571,7 +613,7 @@
       targetSum += target[i];
     }
     averageLvl = parseFloat(targetSum / (dChannels - 1.0));
-    console.info(`Optimized target volume level: ${averageLvl} dB`);
+    console.info(`Optimized target volume level for all speakers: ${averageLvl} dB`);
     console.info(`Total number of speakers averaged (excludes subwoofer): ${dChannels - 1}`);
     console.log('Finalized speaker volume settings:');
     for (let i = 1; i <= dChannels; i++) {
@@ -582,21 +624,38 @@
         const indexTC = dChannels + 1;
         const volShift = await postNext('Align SPL', [indexSW, indexTC], {"frequencyHz": "63","spanOctaves": "3","targetdB": "average"});
         const volDelta = parseFloat(volShift.results[indexSW].alignSPLOffsetdB);
-        customLevel[i] = (Math.round(volDelta * 4) / 2).toFixed(1);
-        console.log(`${title[indexSW].slice(0,-1)}: ${customLevel[i]} dB ; with ${volDelta * 2 - customLevel[i]} dB filter compensation`);
-        await postNext('Add SPL offset', indexSW, {offset: volDelta});
-        await postNext('Add SPL offset', indexTC, {offset: volDelta});
+        let volDeltaNew = volDelta;
+        if ((volDelta > 6.0) || (volDelta < subtrueMaxTrim)) {
+          console.error(`Required subwoofer volume adjustment is beyond AV Receiver's hardware limits!`);
+          console.warn(`Be advised to repeat Audyssey calibration process after re-adjusting subwoofer volume!`);
+          console.info(`The algorithm will now apply maximum possible volume setting to the subwoofer and continue.`);
+          console.warn("However, optimization will not result in the best achiveable performance!");
+          volDeltaNew = Math.max(subtrueMaxTrim, Math.min(12, volDelta));
+        }
+        customLevel[i] = (Math.round(volDeltaNew * 4) / 2).toFixed(1);
+        console.log(`${title[indexSW].slice(0,-1)}: ${customLevel[i]} dB ; with ${volDeltaNew * 2 - customLevel[i]} dB filter compensation`);
+        await postNext('Add SPL offset', indexSW, {offset: volDeltaNew});
+        await postNext('Add SPL offset', indexTC, {offset: volDeltaNew});
         continue;
       }
     const volDif = parseFloat(averageLvl - target[i]);
-    customLevel[i] = (Math.round(volDif * 2) / 2).toFixed(1);
-    console.log(`${title[i].slice(0,-1)}: ${customLevel[i]} ; with ${volDif - customLevel[i]} dB filter compensation`)
+    let volDifNew = volDif;
+    if ((volDif > 12.0) || (volDif < -12.0)) {
+      console.error(`${title[i].slice(0,-1)} seems to require volume adjustment beyond AV Receiver's hardware limits!`);
+      console.warn(`Be advised to find the root cause of this problem and repeat Audyssey calibration if possible!`);
+      console.info(`Optimization will now apply maximum possible volume setting to ${title[i].slice(0,-1)} and continue.`);
+      console.warn("However, the optimization 'may' not result in the best achiveable performance!");
+      volDifNew = Math.max(-12, Math.min(12, volDif));
+    }
+    customLevel[i] = (Math.round(volDifNew * 2) / 2).toFixed(1);
+    console.log(`${title[i].slice(0,-1)}: ${customLevel[i]} ; with ${volDifNew - customLevel[i]} dB filter compensation`)
     await postNext('Add SPL offset', i, {offset: customLevel[i]});
     }
+    console.info(`************************************************************************************************************************`);
     return customLevel;
   }
   async function alignDelays() {
-  console.info('Deriving optimal speaker distances through cross-correlation analysis...');
+  console.info('Deriving optimal speaker distances with advanced cross-correlation analysis...');
   let customDistance = new Array(dChannels + 1).fill(0);
   const minDelay = parseFloat(6.0 / sOs);
   let mDist = {};
@@ -617,10 +676,10 @@
   let minChk = Number(minChk_val.toFixed(2));
   let finDist_val = cDist + minSec * sOs + minChk;
   customDistance[indexSW] = Number(finDist_val.toFixed(2));
-  if (minChk <= subtrueMax) {
-    console.info(`Subwoofer distance is 'optimally' set @ ${customDistance[indexSW]}m and is within the AV Receiver's speaker spacing limits.`);
+  if (minChk <= subtrueMaxDelay) {
+    console.info(`Subwoofer distance is 'optimally' set @ ${customDistance[indexSW]}m and is 'safely' within the AV Receiver's speaker spacing limits.`);
   } else {
-    console.warn(`Calculated optimal subwoofer distance of ${customDistance[indexSW]}m exceeds the receiver's max. speaker spacing limit! [${minChk}m vs ${subtrueMax.toFixed(2)}m]`);
+    console.warn(`Calculated optimal subwoofer distance of ${customDistance[indexSW]}m exceeds AV Receiver's max. speaker spacing limit [${minChk}m vs ${subtrueMaxDelay.toFixed(2)}m]!`);
     console.info('Attempting to re-align the sub...');
     await postNext('Remove IR delays', [1, indexSW]);
     await postNext('Remove IR delays', [1, indexSW]);
@@ -633,10 +692,10 @@
     minChk = Number(minChk_val.toFixed(2));
     finDist_val = cDist + minSec * sOs + minChk;
     customDistance[indexSW] = Number(finDist_val.toFixed(2));
-    if (minChk <= subtrueMax) {
-      console.info(`Subwoofer distance is re-set to ${customDistance[indexSW]}m and is now within receiver speaker spacing limits. [${minChk}m vs ${subtrueMax.toFixed(2)}m]`);
+    if (minChk <= subtrueMaxDelay) {
+      console.info(`Subwoofer distance is re-set to ${customDistance[indexSW]}m and is now within receiver speaker spacing limits [${minChk}m vs ${subtrueMaxDelay.toFixed(2)}m].`);
     } else {
-      console.warn(`Recalculated subwoofer distance of ${customDistance[indexSW]}m still exceeds the receiver's max. speaker spacing limit! [${minChk}m vs ${subtrueMax.toFixed(2)}m]`);
+      console.warn(`Recalculated subwoofer distance of ${customDistance[indexSW]}m still exceeds AV Receiver's max. speaker spacing limit [${minChk}m vs ${subtrueMaxDelay.toFixed(2)}m]!`);
       console.info('Attempting to re-align the sub...');
       await postNext('Align IR start', [1, indexSW]);
       await postNext('Align IR start', [1, indexSW]);
@@ -648,21 +707,22 @@
       minChk = Number(minChk_val.toFixed(2));
       finDist_val = cDist + minSec * sOs + minChk;
       customDistance[indexSW] = Number(finDist_val.toFixed(2));
-      if (minChk <= subtrueMax) {
-        console.info(`Subwoofer distance is again re-set to ${customDistance[indexSW]}m and is finally within the receiver speaker spacing limits. [${minChk}m vs ${subtrueMax.toFixed(2)}m]`);
+      if (minChk <= subtrueMaxDelay) {
+        console.info(`Subwoofer distance is again re-set to ${customDistance[indexSW]}m and is finally within the receiver speaker spacing limits [${minChk}m vs ${subtrueMaxDelay.toFixed(2)}m].`);
       } else {
-        console.warn(`Recalculated subwoofer distance of ${customDistance[indexSW]}m still exceeds the receiver's max. speaker spacing limit! [${minChk}m vs ${subtrueMax.toFixed(2)}m]`);
-        customDistance[indexSW] = Number((subtrueMax + cDist + minSec * sOs).toFixed(2));
-        console.info(`Setting subwoofer distance 'suboptimally' to ${customDistance[indexSW]}m (max. allowed)`);
+        console.warn(`Recalculated subwoofer distance of ${customDistance[indexSW]}m still exceeds AV Receiver's max. speaker spacing limit [${minChk}m vs ${subtrueMaxDelay.toFixed(2)}m]!`);
+        customDistance[indexSW] = Number((subtrueMaxDelay + cDist + minSec * sOs).toFixed(2));
+        console.info(`Setting subwoofer distance 'suboptimally' to ${customDistance[indexSW]}m (max. allowed).`);
         console.warn("Please ensure to inspect your setup thoroughly to identify the root cause of the significant delay!")
       }
     }
   }
+  console.info(`************************************************************************************************************************`);
   return customDistance;
   }
   async function generateFilters() {
     console.info(`Crafting custom room correction filters...`);
-    delay *= 1.5;
+    delay *= 1.75;
     const measurements = await fetch_mREW();
     let indexTC = dChannels + 1;
     await postNext('Minimum phase version', indexTC, {
@@ -711,77 +771,74 @@
       await fetch_mREW(ii + 3, 'PUT', {title: filtTitle});
     }
     console.log(`Done!`);
+    console.info(`************************************************************************************************************************`);
   }
   async function calculateCrossovers() {
-    console.info(`Pinpointing optimal crossover frequencies...`);
+    console.info(`Pinpointing crossover frequencies for each speaker...`);
     let customCrossover = new Array(dChannels + 1).fill(0);
-    delay *= 2.0;
+    let newMeasurements;
+    delay *= 3.0;
     const level = averageLvl;
     const measurements = await fetch_mREW();
-    const indexTC = dChannels + 1;
     const indexSWf = dChannels + indexSW * 5 + 1;
-    const start = dChannels + 1;
+    const start = dChannels + 6;
     const end = dChannels * 6 + 1;
     for (let i = start; i <= end; i += 5) {
       if (i === indexSWf) {continue;}
-      await postNext('Smooth', i, {smoothing: "1/1"});
-      if (i === indexTC) {continue;}
-      const magBase64 = await fetchSafe('frequency-response',i);
-      const bytes = Uint8Array.from(atob(magBase64.magnitude), c => c.charCodeAt(0));
-      const buffer = bytes.buffer;
-      const floatArray = new Float32Array(buffer);
-      const dataView = new DataView(buffer);  
-      const arr = []; 
-      for (let j = 0; j < floatArray.length; j++) { 
-        const splValue = dataView.getFloat32(j * 4);
-        arr.push(splValue);
-      }
-      const sigmaTable = [
-      { name: "F", matchingRow: 285, levelDelta: 3.41 },
-      { name: "40", matchingRow: 381, levelDelta: 3.519 },
-      { name: "60", matchingRow: 437, levelDelta: 3.659 },
-      { name: "80", matchingRow: 477, levelDelta: 3.818 },
-      { name: "90", matchingRow: 493, levelDelta: 3.924 },
-      { name: "10", matchingRow: 507, levelDelta: 4.044 },
-      { name: "11", matchingRow: 521, levelDelta: 4.092 },
-      { name: "12", matchingRow: 533, levelDelta: 4.179 },
-      { name: "15", matchingRow: 564, levelDelta: 4.398 },
-      { name: "18", matchingRow: 589, levelDelta: 4.596 },
-      { name: "20", matchingRow: 603, levelDelta: 4.733 },
-      { name: "25", matchingRow: 634, levelDelta: 4.956 }];
-      const differences = [];
-      for (const { name, matchingRow, levelDelta } of sigmaTable) {
-        const decodedValue = arr[matchingRow];
-        //console.log(decodedValue)
-        const targetValue = level - levelDelta;
-        //console.log(targetValue)
-        const sigmaOCA = level - levelDelta - decodedValue;
-        differences.push({ frequency: name, sigmaOCA });
-      }
-      let minAbsDifference = Infinity;
-      let minFrequency = null;
-      const k = (i - dChannels - 1) / 5;
-      for (const { frequency, sigmaOCA } of differences) {
-        const absDifference = Math.abs(sigmaOCA);
-        if (absDifference < minAbsDifference) {
-            minAbsDifference = absDifference;
-            customCrossover[k] = frequency;
+      await postNext('Cross corr align', [indexSWf, i]);
+      await postNext('Vector average', [indexSWf, i]);
+      const newTitle = measurements[i].title.slice(0,-5) + "xo";
+      newMeasurements = await fetch_mREW();
+      const newIndex = Object.keys(newMeasurements).length;
+      await fetch_mREW(newIndex, 'PUT', {title: newTitle});
         }
+      newMeasurements = await fetch_mREW();
+      let k=1;
+      for (let i = (end + 1); i <= (end + dChannels - 1); i++) {
+        const magBase64 = await fetchSafe('frequency-response', i);
+        const bytes = Uint8Array.from(atob(magBase64.magnitude), c => c.charCodeAt(0));
+        const buffer = bytes.buffer;
+        const floatArray = new Float32Array(buffer);
+        const dataView = new DataView(buffer);  
+        const arr = [];
+        const fixedValues = [40, 60, 80, 90, 100, 110, 120, 150];
+        let maxSplValue = -Infinity;
+        let maxSplValueIndex = -1;
+        for (let j = 0; j < 442; j++) {
+          const splValue = dataView.getFloat32(j * 4);
+          arr.push(splValue);
+          if (splValue > maxSplValue) {
+            maxSplValue = splValue;
+            maxSplValueIndex = j;
+          }
+        }
+        const xoFreq = maxSplValueIndex * 0.366211 + 2.929688;
+        let roundedXoFreq;
+        let minDiff = Infinity;
+        for (const value of fixedValues) {
+          const diff = Math.abs(xoFreq - value);
+          if (diff < minDiff) {
+            minDiff = diff;
+            roundedXoFreq = value;
+          }
+        }
+        console.log(`Calculated optimal crossover frequency between ${newMeasurements[i].title.slice(0,-2)} and the subwoofer: ${xoFreq}Hz, nearest match in the unit: ${roundedXoFreq}Hz`)
+        if (k === indexSW) {k++;}
+        customCrossover[k] = String(roundedXoFreq).slice(0, 2);
+        k++;
       }
-      let displayFrequency;
-      if (customCrossover[k] === 'F') {
-          displayFrequency = 'FULL RANGE <= 20';
-      } else if (['40', '60', '80', '90'].includes(customCrossover[k])) {
-          displayFrequency = customCrossover[k];
-      } else {
-          displayFrequency = parseInt(customCrossover[k]) * 10;
-      }
-      console.info(`Crossover frequency for ${measurements[i].title.slice(0,-5)} is set @ ${displayFrequency}Hz`);
-    }
+      console.info(`Done!`);
+      console.info(`Speaker pairs with different crossover frequencies will be synched at the 'lower one' of the two in the AV Receiver.`);
+      console.info(`This algorithm will NOT assign any speaker as 'Full Range' to keep the overall bass response under subwoofer control.`);
+      console.info(`Feel free to experiment with system bass response by switching some or all of your truly full range speakers to "Large".`);
+      console.info(`Increasing crossover frequencies 'may' lead to audible improvements due to decreased loads on the AVR and the speakers.`);
+      console.info(`Determined XO frequencies will work best with properly aligned subwoofers. Make all efforts to decrease SW delays.`);
+      console.info(`************************************************************************************************************************`);
     return customCrossover;  
   }
   async function updateADY(customLevel, customDistance, customCrossover){
     console.info(`Consolidating all optimal adjustments into the final calibration file...`);
+    console.info(`************************************************************************************************************************`);
     let filterTitle = {};
     const jsonData = JSON.parse(adyContents);
     jsonData.dynamicVolume=false;
@@ -836,39 +893,54 @@
         thisChannel.customLevel = Number(parseFloat(customLevel[j]).toFixed(2));
         thisChannel.customDistance = Number(parseFloat(customDistance[j]).toFixed(2));
         thisChannel.customCrossover = customCrossover[j];
-        thisChannel.customSpeakerType = customCrossover[j] === "F" ? "L" : "S";
-        thisChannel.channelReport.customEnSpeakerConnect = customCrossover[j] === "F" ? 2 : 1;
+        thisChannel.customSpeakerType = "S";
+        thisChannel.channelReport.customEnSpeakerConnect = 1;
       }
     }
     for (let channel of jsonData.detectedChannels) {
-        if (channel.commandId.startsWith("SW")) {
-            let customDistanceValue = parseFloat(customDistance[indexSW]) + parseFloat(channel.delayAdjustment);
-            let customLevelValue = parseFloat(customLevel[indexSW]) + parseFloat(channel.trimAdjustment);
-            channel.customDistance = parseFloat(customDistanceValue);
-            channel.customLevel = parseFloat(customLevelValue);
-            channel.frequencyRangeRolloff = 250;
-        }
+      if (channel.commandId.startsWith("SW")) {
+        let customDistanceValue = parseFloat(customDistance[indexSW]) + parseFloat(channel.delayAdjustment);
+        let customLevelValue = parseFloat(customLevel[indexSW]) + parseFloat(channel.trimAdjustment);
+        channel.customDistance = parseFloat(customDistanceValue);
+        let distanceValue = parseFloat(customDistance[indexSW]);
+        channel.channelReport.distance = parseFloat(distanceValue);
+        channel.customLevel = parseFloat(customLevelValue);
+        channel.frequencyRangeRolloff = 250;
+        channel.trimAdjustment = "0.0";
+        channel.delayAdjustment = "0.0";
+      }
     }
-      const adyOCA = JSON.stringify(jsonData);
-      const blob = new Blob([adyOCA], {type: 'json'});
-      const urlBlob = URL.createObjectURL(blob);
-      var downloadLink = document.createElement("a");
-      downloadLink.href = urlBlob;
-      downloadLink.download = getadyName(fileName, "_OneOptimized.ady");
-      downloadLink.style.display = "none";
-      downloadLink.style.display = "none";
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      document.body.removeChild(downloadLink);
+    const cleanUp = await fetch_mREW();
+    delay *= 0.4;
+    for (let i = dChannels * 7; i > dChannels + 1; i --){
+      const iDelete = cleanUp[i].title;
+      if (iDelete.includes("-MP") || iDelete.includes("1/A") || iDelete.includes("over") || iDelete.includes("xo")) {
+        await postDelete(i);
+        await new Promise(resolve => setTimeout(resolve, delay * 1.15));
+      }
+    }
+    const adyOCA = JSON.stringify(jsonData);
+    const blob = new Blob([adyOCA], {type: 'json'});
+    const urlBlob = URL.createObjectURL(blob);
+    var downloadLink = document.createElement("a");
+    downloadLink.href = urlBlob;
+    downloadLink.download = getadyName(fileName, "_OneOptimized.ady");
+    downloadLink.style.display = "none";
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
   }
   async function optimizerOCA() {
     try {
       const jsonData = JSON.parse(adyContents);
       const tName = checkModelSpeedOfSound(jsonData);
-      console.info(`Speed of sound has been automatically set to ${sOs.toFixed(1)} m/s for your AV Receiver model: ${tName}`);
+      console.info(`Based on your specific AVR model: ${tName}, speed of sound has been set to ${sOs.toFixed(1)} m/s for all distance calculations.`);
       console.warn('(If you think this setting is incorrect, please notify OCA!)');
-      updateConstants(jsonData);
+      console.info(`************************************************************************************************************************`);
+      await updateConstants(jsonData);
       var nSpeakers = await check_initialConditions();
+      console.info(`************************************************************************************************************************`);
       if (nSpeakers === dChannels) {console.info('Optimization process started...');} else {throw Error('Number of channels mismatch!');}
       await getVectorAverages();
       const customLevel = await alignLevels();
@@ -876,12 +948,18 @@
       await generateFilters();
       const customCrossover = await calculateCrossovers();
       await updateADY(customLevel, customDistance, customCrossover);
+      console.info(`************************************************************************************************************************`);
       console.log("'Audyssey One' optimization is completed with SUCCESS!");
-      console.info("When prompted, save the .ady file to your PC and send it to your MultEQ Editor app.");
-      console.info("Then transfer it 'as is' from the app to your AV receiver.");
-      console.info('The video description contains a download link for several Dolby Atmos & DTS-X test clips');
-      console.info("compatible for playback via a USB key on your Blu-ray player.");
-      console.info('ENJOY!');
+      console.info(`************************************************************************************************************************`);
+      console.info("When prompted, save the .ady file to your PC and send it 'as is' to your MultEQ Editor app.");
+      console.info("Next, transfer it 'as is' from the app to your AV receiver as you normally would.");
+      console.info("The Editor app graphs will no longer represent final speaker responses due to the special filtering technique implemented.");
+      console.info("Speaker responses with 'final' indices under REW / All SPL tab are your expected post-calibration responses.");
+      console.info(`************************************************************************************************************************`);
+      console.info('YouTube video (https://youtu.be/iU1ZBsru76M) contains a download link for several Dolby Atmos & DTS-X test clips');
+      console.info("compatible for playback via a USB key on your Blu-ray player for testing.");
+      console.info(`************************************************************************************************************************`);
+      console.info('Enjoy your new sound!');
     }
     catch (error) {
       console.error(error, "- program execution has stopped!");
@@ -892,8 +970,6 @@
     function scrollToBottom() {
       logContainer.scrollTop = logContainer.scrollHeight;
     }
-
-
     const originalWarn = console.warn;
     console.warn = function (...args) {
       const warningMessage = args.join(' ');
@@ -902,7 +978,6 @@
       scrollToBottom();
       originalWarn.apply(console, args);
     };
-
     const originalInfo = console.info;
         console.info = function (...args) {
           const warningMessage = args.join(' ');
@@ -911,7 +986,6 @@
           scrollToBottom();
           originalWarn.apply(console, args);
         };
-
     const originalLog = console.log;
     console.log = function (...args) {
       const logMessage = args.join(' ');
