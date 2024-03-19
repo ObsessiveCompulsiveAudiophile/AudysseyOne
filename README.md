@@ -8,7 +8,7 @@ First ever utilization of the Room EQ Wizard's API and full automation of state 
 
 
 
-Pinned by Obsessive Compulsive Audiophile
+
 @ocaudiophile
   • 46 seconds ago
 Audyssey One has been updated to version 1.2 today with the following improvements and revisions:
