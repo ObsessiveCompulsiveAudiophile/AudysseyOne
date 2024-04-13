@@ -109,6 +109,7 @@
 // **************************** version 1.2 19 MAR 2024 - 21:04 CET ************************************
   let adyContents; let fileName;
   let dChannels; let subtrueMaxDelay;let subtrueMaxTrim;
+  let nSubs = 0;
   let indexSW; let cDist;
   let sOs;
   let delay = 150; //increase this value if your machine is slow and needs more time to process operations
@@ -144,7 +145,7 @@
     return targetModelName;
   }
   async function updateConstants(jsonData) {
-    let nSubs = 0;
+    nSubs = 0;
     const channelKeys = Object.keys(jsonData.detectedChannels);
     dChannels = channelKeys.length;
     for (let i = dChannels; i >= 1; i--) {
@@ -152,10 +153,9 @@
       const commandId = jsonData.detectedChannels[key].commandId;
       if (commandId.startsWith("SW")) {
         nSubs++;
-      } else {
-        dChannels -= nSubs; dChannels++; break;
       }
     }
+    dChannels -= nSubs;
     if (nSubs === 0) {throw new Error('Optimization will not work with systems with NO subwoofer!')}
     subtrueMaxDelay = 0.0;
     subtrueMaxTrim = 0.0;
@@ -519,6 +519,19 @@
       }
     }
   }
+
+  function getTitleKeyAndIndex(title) {
+      if (title.startsWith('SW')) {
+        const [result, key, index] = title.match(/(SW\d{0,1})(\d+)/);
+        return { key, index };
+      }
+      const [result, key, index] = title.match(/([A-Z]+)(\d+)/);
+      if (!/^\D+(\d+)?$/.test(key)) {
+        throw new Error(`Speaker name ${key} does not end with an indice.`);
+      }
+      return { key, index };
+  }
+
   async function check_initialConditions() {
     
     const measurements = await fetch_mREW();
@@ -527,17 +540,13 @@
     const mCount = Object.keys(measurements).length
     for (let i = 1; i <= mCount; i++) {
       const title = measurements[i].title;
-      const titleKey = title.replace(/\d+/g, '');
-      if (!/^\D+(\d+)?$/.test(titleKey)) {
-        throw new Error(`Speaker name ${titleKey} does not end with an indice.`);
+      const { key, index } = getTitleKeyAndIndex(title);
+      if (!titles[key]) {
+        titles[key] = true;
+        titleIndices[key] = [];
       }
-      if (!titles[titleKey]) {
-        titles[titleKey] = true;
-        titleIndices[titleKey] = [];
-      }
-      const matchResult = title.match(/\d+/);
-      if (matchResult && matchResult.length > 0) {
-        titleIndices[titleKey].push(parseInt(matchResult[0]));
+      if (index && index.length > 0) {
+        titleIndices[key].push(parseInt(index));
       } else {
         throw new Error(`No indices found in speaker name: ${title}`);
       }
@@ -954,7 +963,7 @@
       var nSpeakers = await check_initialConditions();
       console.info(`************************************************************************************************************************`);
       const startTime = performance.now();
-      if (nSpeakers === dChannels) {console.info('Optimization process started...');} else {throw Error('Number of channels mismatch!');}
+      if (nSpeakers === dChannels + nSubs) {console.info('Optimization process started...');} else {throw Error('Number of channels mismatch!');}
       await getVectorAverages();
       const customLevel = await alignLevels();
       const customDistance = await alignDelays();
