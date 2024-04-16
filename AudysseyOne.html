@@ -753,7 +753,7 @@
         upperLimit: "0"});
       await postNext('Arithmetic', [ii + 1, ii + 1], {
         function: "1 / A",
-        maxGain: "0",
+        maxGain: "3",
         lowerLimit: "0",
         upperLimit: "750",
         autoTarget: "0",
@@ -802,7 +802,7 @@
         const floatArray = new Float32Array(buffer);
         const dataView = new DataView(buffer);  
         const arr = [];
-        const fixedValues = [40, 60, 80, 90, 100, 110, 120, 150];
+        const fixedValues = [80, 90, 100, 110];
         let maxSplValue = -Infinity;
         let maxSplValueIndex = -1;
         for (let j = 0; j < 442; j++) {
@@ -906,7 +906,7 @@
         let distanceValue = parseFloat(customDistance[indexSW]);
         channel.channelReport.distance = parseFloat(distanceValue);
         channel.customLevel = parseFloat(customLevelValue);
-        channel.frequencyRangeRolloff = 250;
+        channel.frequencyRangeRolloff = 200;
         channel.trimAdjustment = "0.0";
         channel.delayAdjustment = "0.0";
       }
