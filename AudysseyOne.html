@@ -432,7 +432,7 @@
                   throw new Error('Network response was not OK!');
                   }
               const data = await response.json();
-              if (data.message === "Completed" && data.processName === processName) {
+              if (data.message === "Completed" && data.processName.startsWith(processName)) {
                   return data;
                   } else {
                       await new Promise(resolve => setTimeout(resolve, delay)); 
