@@ -1,0 +1,248 @@
+async function getXovers() {
+  const getColorForValue = (value, minValue, maxValue, applyGradient = true) => {
+    if (!applyGradient) return '';
+    if (isNaN(value) || isNaN(minValue) || isNaN(maxValue) || minValue === maxValue) return '';
+    const normalizedValue = (value - minValue) / (maxValue - minValue);
+    const hue = 120 * normalizedValue;
+    const saturation = 0.7;
+    const lightness = 0.3;
+    return `hsl(${hue}, ${saturation * 100}%, ${lightness * 100}%)`;};
+  const calculateMinMaxValues = (data, keys) => {
+    let minValue = Infinity;
+    let maxValue = -Infinity;
+    data.forEach((row) => {
+      keys.forEach(key => {
+        const numericValue = parseFloat(row[key].replace('%', ''));
+        minValue = Math.min(minValue, numericValue);
+        maxValue = Math.max(maxValue, numericValue);
+      });
+    });
+    return {minValue, maxValue};};
+  const createTableHTML = (data, rawKeys, adjKeys, rawMinValue, rawMaxValue, adjMinValue, adjMaxValue) => {
+    let tableHTML = '<table style="border-collapse: collapse; width: 68%; font-size: 10px;">';
+    tableHTML += '<thead><tr>';
+    Object.keys(data[0]).forEach((header) => {
+      tableHTML += `<th style="border: 1px solid #22C55E; padding: 1px; text-align: center;">${header}</th>`;
+    });
+    tableHTML += '</tr></thead><tbody>';
+    data.forEach((row) => {
+      tableHTML += '<tr>';
+      Object.keys(row).forEach((key) => {
+        const value = row[key];
+        const numericValue = parseFloat(value.replace('%', ''));
+        let bgColor = '';
+        if (key !== "Frequency") {
+          if (adjKeys.includes(key)) {
+            bgColor = getColorForValue(numericValue, adjMinValue, adjMaxValue);
+          } else if (rawKeys.includes(key)) {
+            bgColor = getColorForValue(numericValue, rawMinValue, rawMaxValue);
+          }
+        }
+        tableHTML += `<td style="border: 1px solid #22C55E; padding: 1px; text-align: center; background-color: ${bgColor};">${value}</td>`;
+      });
+      tableHTML += '</tr>';
+    });
+    tableHTML += '</tbody></table>';
+    return tableHTML;};
+  const analyzeSpeaker = async (i, offset) => {
+    await postNext('Offset t=0', i, {offset, unit: "seconds"});
+    const interXo = await xoInter(i);
+    console.info(`${commandId[i]} drops below target curve @ ${interXo.toFixed(2)}Hz`);
+    const scores = await xoScores(i, interXo);
+    await postNext('Offset t=0', i, {offset: -offset, unit: "seconds"});
+    return {interXo, ...scores};};
+  isLarge = new Array(nSpeakers + 1).fill(false);
+  allPass = new Array(nSpeakers + 1).fill(false);
+  let frequencyMaxSums = {}, singleCount = 0;
+  const peakTime = await findTruePeak(1);
+  for (let i = 1; i <= nSpeakers;) {
+    const isPair = !["C", "CH", "SB", "TS"].includes(commandId[i]) && !(commandId[i] === "SBL" && !commandId.includes("SBR"));
+    console.infoBold(`Analysing crossover frequencies for speaker${isPair ? ` pair ${commandId[i]} + ${commandId[i + 1]}` : ` ${commandId[i]}`}`);
+    const speaker1 = await analyzeSpeaker(i, peakTime);
+    if (isPair) {
+      const speaker2 = await analyzeSpeaker(i + 1, peakTime);
+      let rawSums = [], adjustedSums = [];
+      speaker1.xoIndex.forEach((freq, idx) => {
+        const sum1 = (speaker1.scores[idx] + speaker2.scores[idx]) / 2;
+        const sum2 = (speaker1.scoresAP[idx] + speaker2.scoresAP[idx]) / 2;
+        const sum3 = (speaker1.scores[idx] + speaker2.scoresAP[idx]) / 2;
+        const sum4 = (speaker1.scoresAP[idx] + speaker2.scores[idx]) / 2;
+        const adjSum1 = (speaker1.adjustedScores[idx] + speaker2.adjustedScores[idx]) / 2;
+        const adjSum2 = (speaker1.adjustedScoresAP[idx] + speaker2.adjustedScoresAP[idx]) / 2;
+        const adjSum3 = (speaker1.adjustedScores[idx] + speaker2.adjustedScoresAP[idx]) / 2;
+        const adjSum4 = (speaker1.adjustedScoresAP[idx] + speaker2.adjustedScores[idx]) / 2;
+        rawSums.push([sum1, sum2, sum3, sum4]);
+        adjustedSums.push([adjSum1, adjSum2, adjSum3, adjSum4]);
+        const maxSum = Math.max(sum1, sum2, sum3, sum4);
+        const maxSumIndex = [sum1, sum2, sum3, sum4].indexOf(maxSum);
+        const allPassConditions = [[false, false], [true, true], [false, true], [true, false]][maxSumIndex];
+        if (!frequencyMaxSums[freq]) frequencyMaxSums[freq] = [];
+        frequencyMaxSums[freq].push({maxSum, allPassConditions, pair: [commandId[i], commandId[i + 1]]});});
+      const tableData = speaker1.xoIndex.map((freq, idx) => {
+        return {
+          Frequency: `${freq}Hz`,
+          " Left ": `${speaker1.scores[idx].toFixed(2)}%`,
+          "L w/AP": `${speaker1.scoresAP[idx].toFixed(2)}%`,
+          "Right ": `${speaker2.scores[idx].toFixed(2)}%`,
+          "R w/AP": `${speaker2.scoresAP[idx].toFixed(2)}%`,
+          "Left+Right": `${rawSums[idx][0].toFixed(2)}%`,
+          "(L + R)/AP": `${rawSums[idx][1].toFixed(2)}%`,
+          "L + R w/AP": `${rawSums[idx][2].toFixed(2)}%`,
+          "L w/AP + R": `${rawSums[idx][3].toFixed(2)}%`,
+          "TC adjusted  L + R": `${adjustedSums[idx][0].toFixed(2)}%`,
+          "TC adj. (L + R)/AP": `${adjustedSums[idx][1].toFixed(2)}%`,
+          "TC adj. L + R w/AP": `${adjustedSums[idx][2].toFixed(2)}%`,
+          "TC adj. L w/AP + R": `${adjustedSums[idx][3].toFixed(2)}%`
+        };});
+      const rawKeys = [" Left ", "L w/AP", "Right ", "R w/AP", "Left+Right", "(L + R)/AP", "L + R w/AP", "L w/AP + R"];
+      const adjKeys = ["TC adjusted  L + R", "TC adj. (L + R)/AP", "TC adj. L + R w/AP", "TC adj. L w/AP + R"];
+      const {minValue: rawMinValue, maxValue: rawMaxValue} = calculateMinMaxValues(tableData, rawKeys);
+      const {minValue: adjMinValue, maxValue: adjMaxValue} = calculateMinMaxValues(tableData, adjKeys);
+      const tableHTML = createTableHTML(tableData, rawKeys, adjKeys, rawMinValue, rawMaxValue, adjMinValue, adjMaxValue);
+      logContainer.insertAdjacentHTML('beforeend', tableHTML);
+      let bestFrequency;
+      function findBestFrequency(sumsToEvaluate, label) {
+        let bestFreqIdx = -1;
+        let bestSum = -Infinity;
+        let bestCombination = null;
+        sumsToEvaluate.forEach((sums, idx) => {
+          sums.forEach((sum, combIdx) => {
+            if (sum > bestSum) {
+              bestSum = sum;
+              bestFreqIdx = idx;
+              bestCombination = combIdx;
+            }
+          });
+        });
+        allPass[i] = bestCombination === 1 || bestCombination === 3;
+        allPass[i + 1] = bestCombination === 1 || bestCombination === 2;
+        const bestFrequencyX = speaker1.xoIndex[bestFreqIdx];
+        console.log(`${label} crossover frequency: ${bestFrequencyX}Hz, pair score: ${bestSum.toFixed(2)}%, allpass filters => Left: ${allPass[i]}, Right: ${allPass[i + 1]}`);
+        return bestFrequencyX;
+      }
+      const rawBest = findBestFrequency(rawSums, "Optimal");
+      const targetBest = findBestFrequency(adjustedSums, "Target curve and speaker power adjusted");
+      bestFrequency = pickRaw ? rawBest : targetBest;
+      if (i === 1 && forceLarge) {
+        console.warn(`User override: Front speakers will be set to 'Large / Full range' and subwoofer mode will be set to 'LFE + Main`);
+        isLarge[1] = isLarge[2] = true;
+        bestFrequency = 0;
+        allPass[1] = allPass[2] = false;
+        await largeFronts();
+        bestFrequency = customCrossover[1];
+      }
+      customCrossover[i] = customCrossover[i + 1] = bestFrequency;
+      i += 2;
+    } else {
+      const singleSpeakerTableData = speaker1.xoIndex.map((freq, idx) => {
+        const maxSum = Math.max(speaker1.scores[idx], speaker1.scoresAP[idx]);
+        const maxSumIndex = [speaker1.scores[idx], speaker1.scoresAP[idx]].indexOf(maxSum);
+        const allPassConditions = [maxSumIndex === 1];
+        if (!frequencyMaxSums[freq]) frequencyMaxSums[freq] = [];
+        frequencyMaxSums[freq].push({maxSum, allPassConditions: [allPassConditions], pair: [commandId[i]]});
+        return {
+          Frequency: `${freq}Hz`,
+          "Raw speaker scores ": `${speaker1.scores[idx].toFixed(2)}%`,
+          "Scores with allpass": `${speaker1.scoresAP[idx].toFixed(2)}%`,
+          "Target curve adjusted scores ": `${speaker1.adjustedScores[idx].toFixed(2)}%`,
+          "TC adjusted scores w/AP filter": `${speaker1.adjustedScoresAP[idx].toFixed(2)}%`
+        };});
+      const rawKeys = ["Raw speaker scores ", "Scores with allpass"];
+      const adjKeys = ["Target curve adjusted scores ", "TC adjusted scores w/AP filter"];
+      const {minValue: rawMinValue, maxValue: rawMaxValue} = calculateMinMaxValues(singleSpeakerTableData, rawKeys);
+      const {minValue: adjMinValue, maxValue: adjMaxValue} = calculateMinMaxValues(singleSpeakerTableData, adjKeys);
+      const tableHTML = createTableHTML(singleSpeakerTableData, rawKeys, adjKeys, rawMinValue, rawMaxValue, adjMinValue, adjMaxValue);
+      logContainer.insertAdjacentHTML('beforeend', tableHTML);
+      let bestFrequency;
+      function findBestFrequencyForSpeaker(speaker, label, useRaw) {
+        let bestScore;
+        let scores = useRaw ? speaker.scores : speaker.adjustedScores;
+        let scoresAP = useRaw ? speaker.scoresAP : speaker.adjustedScoresAP;
+        const bestIndex = scores.indexOf(Math.max(...scores));
+        const bestAPIndex = scoresAP.indexOf(Math.max(...scoresAP));
+        bestFreq = scores[bestIndex] > scoresAP[bestAPIndex] ? speaker.xoIndex[bestIndex] : speaker.xoIndex[bestAPIndex];
+        bestScore = Math.max(...scores, ...scoresAP);
+        allPass[i] = scores[bestIndex] < scoresAP[bestAPIndex];
+        console.log(`${label} crossover frequency: ${bestFreq}Hz, score: ${bestScore.toFixed(2)}%, allpass filter => ${allPass[i]}`);
+        return bestFreq;
+      }
+      const rawBest = findBestFrequencyForSpeaker(speaker1, "Optimal", pickRaw);
+      const targetBest = findBestFrequencyForSpeaker(speaker1, "Target curve and speaker power adjusted", !pickRaw);
+      bestFrequency = pickRaw ? rawBest : targetBest;
+      customCrossover[i] = bestFrequency;
+      i++;
+      singleCount++;
+    }
+  }
+  if (sameXover) {
+    console.infoBold(`Optimal system-wide uniform crossover configuration:`);
+    const frequencyTotals = Object.entries(frequencyMaxSums).reduce((totals, [freq, contributions]) => {
+      const totalSum = contributions.reduce((sum, entry) => {
+        const multiplier = entry.pair.length === 1 
+          ? 1
+          : entry.pair.includes('FL') && entry.pair.includes('FR') && favorMains
+            ? 4
+            : 2
+        return sum + (entry.maxSum * multiplier);
+      }, 0);
+      totals[freq] = {totalSum, contributions};
+      return totals;}, {});
+    const bestFrequencyEntry = Object.entries(frequencyTotals).reduce((best, [freq, data]) => {
+      return data.totalSum > best.totalSum ? {freq, ...data} : best;
+    }, {freq: null, totalSum: -Infinity, contributions: []});
+    const {freq: bestFrequency, totalSum, contributions} = bestFrequencyEntry;
+    let minValue = Infinity;
+    let maxValue = -Infinity;
+    contributions.forEach(({maxSum}) => {
+      minValue = Math.min(minValue, maxSum);
+      maxValue = Math.max(maxValue, maxSum);
+    });
+    let tableHTML = '<table style="border-collapse: collapse; width: 40%;">';
+    tableHTML += `
+      <thead>
+        <tr>
+          <th style="border: 1px solid #22C55E; padding: 1px; text-align: center; font-style: italic; white-space: normal;">Optimal Uniform Crossover Freq.</th>
+          <th style="border: 1px solid #22C55E; padding: 1px; text-align: center; font-style: italic;">Speaker(s)</th>
+          <th style="border: 1px solid #22C55E; padding: 1px; text-align: center; font-style: italic;">Performace score</th>
+          <th style="border: 1px solid #22C55E; padding: 1px; text-align: center; font-style: italic;">AllPass filter applied</th>
+          <th style="border: 1px solid #22C55E; padding: 1px; text-align: center; font-style: italic;">AllPass filter applied</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="font-weight: bold;">
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">${bestFrequency}Hz</td>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">System overall</td>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">${(totalSum / (nSpeakers + (favorMains ? 2 : 0))).toFixed(2)}%</td>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">-</td>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">-</td>
+        </tr>
+    `;
+    contributions.forEach(({pair, maxSum, allPassConditions = []}) => {
+      const bgColor = getColorForValue(maxSum, minValue, maxValue);
+      tableHTML += `
+        <tr>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">${bestFrequency}</td>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">${pair[1] !== undefined ? `${pair[0]} + ${pair[1]}` : pair[0]}</td>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center; background-color: ${bgColor};">${maxSum.toFixed(2)}%</td>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">${allPassConditions[0] ?? '-'}</td>
+          <td style="border: 1px solid #22C55E; padding: 1px; text-align: center;">${pair[1] !== undefined ? (allPassConditions[1] ?? '-') : '-'}</td>
+        </tr>
+      `;
+    });
+    tableHTML += '</tbody></table>';
+    logContainer.insertAdjacentHTML('beforeend', tableHTML);
+    console.log(`Best uniform system-wide crossover frequency: ${bestFrequency}Hz, score: ${(bestFrequencyEntry.totalSum / (nSpeakers + (favorMains ? 2 : 0))).toFixed(2)}%`);
+    let i = 1;
+    contributions.forEach(({pair, maxSum, allPassConditions}) => {
+      allPass[i] = allPassConditions[0];
+      isLarge[i] = false;
+      customCrossover[i] = bestFrequency;
+      if (pair[1] !== undefined) {
+        allPass[i + 1] = allPassConditions[1];
+        isLarge[i + 1] = false;
+        customCrossover[i + 1] = bestFrequency;
+        i += 2;
+      } else {
+        i++;
+      }});
+  }}
