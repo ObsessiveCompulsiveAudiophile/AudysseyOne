@@ -557,9 +557,13 @@
     }
     const tcResponse = await fetch('http://localhost:4735/eq/house-curve');
     if (tcResponse.ok) {
-      const tcPath = await tcResponse.json();
-      if (tcPath && tcPath.message) {
-        console.log(`Applying Target Curve located @ ${tcPath.message}`);
+      const tcData = await tcResponse.json();
+      const tcPath =
+        typeof tcData === 'string'
+          ? tcData
+          : tcData?.message || tcData?.path || tcData?.file;
+      if (tcPath) {
+        console.log(`Applying Target Curve located @ ${tcPath}`);
       } else {
         throw new Error('Failed to locate target curve! Browse to and select "DrTooleTargetCurve.txt" in "REW / EQ window / House curve.');
       }
