@@ -988,7 +988,7 @@
           const warningEntry = `${new Date().toLocaleTimeString()} [INFO] ${warningMessage}\n`;
           logContainer.textContent += warningEntry;
           scrollToBottom();
-          originalWarn.apply(console, args);
+          originalInfo.apply(console, args);
         };
     const originalLog = console.log;
     console.log = function (...args) {
