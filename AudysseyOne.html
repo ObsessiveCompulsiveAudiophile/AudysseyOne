@@ -828,7 +828,7 @@
         }
         console.log(`Calculated optimal crossover frequency between ${newMeasurements[i].title.slice(0,-2)} and the subwoofer: ${xoFreq}Hz, nearest match in the unit: ${roundedXoFreq}Hz`)
         if (k === indexSW) {k++;}
-        customCrossover[k] = String(roundedXoFreq).slice(0, 2);
+        customCrossover[k] = String(roundedXoFreq);
         k++;
       }
       console.info(`Done!`);
